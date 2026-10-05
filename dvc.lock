@@ -1,0 +1,73 @@
+schema: '2.0'
+stages:
+  collect:
+    cmd: python src/pipeline/collect.py --output data/raw/iris_raw.csv
+    outs:
+    - path: data/raw/iris_raw.csv
+      hash: md5
+      md5: dec188c69a16c06221ee947f67062216
+      size: 8992
+  preprocess:
+    cmd: python src/pipeline/preprocess.py --input data/raw/iris_raw.csv 
+      --output data/processed/iris_preprocessed.csv
+    deps:
+    - path: data/raw/iris_raw.csv
+      hash: md5
+      md5: dec188c69a16c06221ee947f67062216
+      size: 8992
+    - path: src/pipeline/preprocess.py
+      hash: md5
+      md5: 3ff1d7396fe73169b457f4811b403f06
+      size: 1968
+    outs:
+    - path: data/processed/iris_preprocessed.csv
+      hash: md5
+      md5: a14ddf816aea4f7a003d1f974d3aaef1
+      size: 4002
+  features:
+    cmd: python src/pipeline/features.py --input 
+      data/processed/iris_preprocessed.csv --output 
+      data/processed/iris_features.csv
+    deps:
+    - path: data/processed/iris_preprocessed.csv
+      hash: md5
+      md5: a14ddf816aea4f7a003d1f974d3aaef1
+      size: 4002
+    - path: src/pipeline/features.py
+      hash: md5
+      md5: 7eaf5852d3434878731275e489dcb16e
+      size: 1466
+    outs:
+    - path: data/processed/iris_features.csv
+      hash: md5
+      md5: 0e0705fa15985fa70f9354a8213a9a15
+      size: 10448
+  validate:
+    cmd: python src/pipeline/validate.py --input 
+      data/processed/iris_features.csv
+    deps:
+    - path: data/processed/iris_features.csv
+      hash: md5
+      md5: 0e0705fa15985fa70f9354a8213a9a15
+      size: 10448
+    - path: src/pipeline/validate.py
+      hash: md5
+      md5: 859ed51ba540dc8dd624724449637946
+      size: 2574
+  feature_store:
+    cmd: python src/feature_store.py --input data/processed/iris_features.csv 
+      --store data/feature_store/iris.db
+    deps:
+    - path: data/processed/iris_features.csv
+      hash: md5
+      md5: 0e0705fa15985fa70f9354a8213a9a15
+      size: 10448
+    - path: src/feature_store.py
+      hash: md5
+      md5: 6ed82035a02d23cacf1950bfbeb959a6
+      size: 4011
+    outs:
+    - path: data/feature_store/iris.db
+      hash: md5
+      md5: 8229b38c613219cfbde90766134dd7c8
+      size: 36864

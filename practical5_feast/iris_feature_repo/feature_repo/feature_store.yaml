@@ -1,0 +1,8 @@
+project: iris_feature_repo
+provider: local
+registry: data/registry.db
+
+online_store:
+  type: sqlite
+  path: data/online_store.db
+  
