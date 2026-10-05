@@ -5,6 +5,8 @@ Derives new, model-useful features from the raw measurements.
 
 import argparse
 import logging
+from io import StringIO
+from pathlib import Path
 
 import pandas as pd
 
@@ -17,11 +19,21 @@ logging.basicConfig(
 logger = logging.getLogger("features")
 
 
+def _read_input_frame(input_data: str | pd.DataFrame) -> pd.DataFrame:
+    if isinstance(input_data, pd.DataFrame):
+        return input_data.copy()
+
+    if not isinstance(input_data, str):
+        raise TypeError(f"Unsupported input type: {type(input_data).__name__}")
+
+    path = Path(input_data)
+    if path.exists():
+        return pd.read_csv(path)
+    return pd.read_csv(StringIO(input_data))
+
+
 def engineer_features(input_path: str | pd.DataFrame, output_path: str | None = None) -> pd.DataFrame:
-    if isinstance(input_path, pd.DataFrame):
-        df = input_path.copy()
-    else:
-        df = pd.read_csv(input_path)
+    df = _read_input_frame(input_path)
 
     df["sepal_area"] = df["sepal length (cm)"] * df["sepal width (cm)"]
     df["petal_area"] = df["petal length (cm)"] * df["petal width (cm)"]
@@ -35,7 +47,9 @@ def engineer_features(input_path: str | pd.DataFrame, output_path: str | None = 
     )
 
     if output_path is not None:
-        df.to_csv(output_path, index=False)
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(output_file, index=False)
 
     logger.info("Engineered %d features -> %s", df.shape[1], output_path)
     return df

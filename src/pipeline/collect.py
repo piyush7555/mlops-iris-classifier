@@ -7,6 +7,7 @@ it to the raw data zone, with basic collection-time metadata logging.
 import argparse
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 from sklearn.datasets import load_iris
@@ -27,7 +28,9 @@ def collect_data(output_path: str) -> pd.DataFrame:
     df["species"] = df["species"].map(dict(enumerate(iris.target_names)))
     df["collected_at"] = datetime.now(timezone.utc).isoformat()
 
-    df.to_csv(output_path, index=False)
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_file, index=False)
 
     logger.info("Collected %d rows -> %s", len(df), output_path)
 

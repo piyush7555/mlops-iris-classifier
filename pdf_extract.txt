@@ -1,0 +1,828 @@
+Experiment 6: Installation and Configuration of MLflow, Experiment 
+Tracking, and Model Registration 
+Aim 
+To install and configure MLflow, train multiple Machine Learning models, log their 
+parameters and metrics, track artifacts, compare experiments, register models in the 
+MLflow Model Registry, and select the best-performing model based on experimental 
+results. 
+Prerequisites & Tool Stack 
+• Completed Experiment 4 (mlops-iris-classifier repository with 
+data/processed/iris_features.csv available) 
+• Python 3.9+ 
+• mlflow (version 2.x) 
+• scikit-learn, pandas, joblib 
+Theoretical Background 
+Experiment tracking addresses one of the most common and costly failures in ML 
+development: the loss of institutional memory about what was tried. Without a systematic 
+tracking tool, data scientists typically rely on ad hoc conventions — renaming output files, 
+scribbling hyperparameters in a notebook comment, or maintaining a personal 
+spreadsheet — all of which are fragile, non-searchable, and impossible to reliably compare 
+across a team. MLflow’s Tracking component solves this by providing a structured API 
+(mlflow.log_param, mlflow.log_metric, mlflow.log_artifact) that records, for every 
+training run: the exact hyperparameters used, the resulting metrics, any output files (plots, 
+serialized models, confusion matrices), the source code version (Git commit hash, if 
+available), and execution metadata (start time, duration, user) — all automatically 
+organized under a named experiment and queryable later via MLflow’s UI or API. 
+MLflow organizes tracked work hierarchically: an Experiment is a logical grouping (e.g., 
+“iris-classification-baseline”), and each Run within it represents one execution of training 
+code with a specific configuration. This hierarchy is what enables experiment 
+comparison: MLflow’s UI can display all runs within an experiment side-by-side in a 
+sortable/filterable table, or overlay their metrics on a single chart, making it 
+straightforward to answer questions like “which hyperparameter combination produced 
+the highest validation accuracy?” without manually cross-referencing scattered notes. 
+Artifact tracking extends this beyond simple scalar metrics: MLflow can store arbitrary 
+files associated with a run — the serialized model itself, a confusion matrix image, a feature 
+importance plot, or a requirements snapshot — in a configured artifact store (a local 
+directory by default; commonly S3, GCS, or Azure Blob in production). Critically, MLflow’s 
+mlflow.sklearn.log_model() (and equivalent flavors for other frameworks) stores the 
+model in a standardized format (MLmodel) that bundles the serialized weights alongside 
+the exact library versions and a defined input/output signature — meaning any 
+downstream tool that understands MLflow’s model format can load and serve the model 
+without needing framework-specific glue code. 
+The MLflow Model Registry sits one layer above individual runs: it is a centralized store 
+for named, versioned models intended for staged promotion toward production. A model 
+can be registered directly from a successful run, creating “Version 1” under a chosen 
+registered model name; subsequent, improved runs can be registered as “Version 2,” 
+“Version 3,” and so on, each retaining a link back to the exact run (and therefore the exact 
+parameters, metrics, code version, and data) that produced it. The registry additionally 
+supports stage transitions (e.g., None → Staging → Production → Archived), giving an 
+organization a single, auditable source of truth for “which model version is currently 
+serving production traffic,” decoupled from any individual data scientist’s local files. This 
+directly enables reproducible model selection: rather than a data scientist informally 
+deciding “the last one I trained felt good,” the best model is chosen by systematically 
+querying logged metrics across all tracked runs and formally promoting the winner 
+through the registry. 
+Step-by-Step Implementation Procedure 
+Step 1: Install and Launch MLflow 
+1: open git bash 
+cd ~/mlops-iris-classifier    
+pwd     Prints the current working directory (the folder/location you are currently in). 
+ls 
+README.md  docs/     dvc.yaml            models/     practical5_feast/  src/ 
+data/      dvc.lock  iris_feature_repo/  notebooks/  requirements.txt 
+Now confirm that your Practical 4 output still exists: 
+ls data/processed 
+iris_features.csv  iris_preprocessed.csv 
+ 
+2: check python 3.11 
+In git bash 
+py -3.11 –version 
+Python 3.11.9 
+ 
+3: Create a separate MLflow environment 
+py -3.11 -m venv .venv-mlflow 
+source .venv-mlflow/Scripts/activate 
+python --version 
+4: upgrade pip 
+python -m pip install --upgrade pip 
+5 : Install MLflow 
+pip install mlflow==2.17.2 
+mlflow --version 
+python -c "import mlflow; print(mlflow.__version__)" 
+ 
+6: start MLflow 
+mlflow server --backend-store-uri sqlite:///mlflow.db --port 5000 
+7: verify the UI 
+open your browser and go to http://127.0.0.1:5000 on browser 
+You should see the MLflow UI. 
+ 
+ 
+ 
+
+Now open another terminal, keep the previous one open. 
+ 
+cd ~/mlops-iris-classifier  
+source .venv-mlflow/Scripts/activate  
+set the MLflow tracking URI: 
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5000   Sets the MLflow Tracking Server 
+address as an environment variable. 
+Verify it: 
+echo $MLFLOW_TRACKING_URI  Displays the current value of that environment variable to verify 
+it is set correctly. 
+Why are we doing this? 
+This tells your Python training program: 
+"Don't store tracking information directly in a local SQLite database. Send it to the MLflow 
+server running at port 5000." 
+So the flow will be: 
+train_with_mlflow.py 
+       │ 
+       │  log parameters 
+       │  log metrics 
+       │  log model 
+       ▼ 
+MLflow Server :5000 
+       │ 
+       ├── mlflow.db 
+       │ 
+       └── artifacts 
+Important 
+You now have two terminals with different jobs: 
+Terminal Purpose What to do 
+Terminal 1 MLflow Server Keep mlflow server ... running 
+Terminal 2 Training/scripts Run Python commands here 
+Next we'll create the corrected src/train_with_mlflow.py and run the three models so that 
+they appear as three runs in your MLflow UI. 
+ 
+Step 2: Create the Experiment Tracking Script 
+We need the src folder 
+code . 
+code src/train_with_mlflow.py 
+paste the following code: 
+ 
+# src/train_with_mlflow.py 
+""" 
+Trains multiple model configurations on the Experiment 4 feature set, 
+logging parameters, metrics, and artifacts to MLflow for each run. 
+""" 
+import os 
+import mlflow 
+import mlflow.sklearn 
+ 
+import pandas as pd 
+import matplotlib.pyplot as plt 
+ 
+from sklearn.model_selection import train_test_split 
+from sklearn.preprocessing import LabelEncoder 
+from sklearn.metrics import ( 
+    accuracy_score, 
+    precision_score, 
+    recall_score, 
+    f1_score, 
+    confusion_matrix, 
+    ConfusionMatrixDisplay 
+) 
+ 
+from sklearn.linear_model import LogisticRegression 
+from sklearn.ensemble import RandomForestClassifier 
+ 
+# --------------------------------------------------------- 
+# 1. MLflow configuration 
+# --------------------------------------------------------- 
+ 
+mlflow.set_tracking_uri( 
+    os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000") 
+) 
+mlflow.set_experiment("iris-classification-baseline") 
+ 
+# --------------------------------------------------------- 
+# 2. Load data 
+# --------------------------------------------------------- 
+ 
+DATA_PATH = "data/processed/iris_features.csv" 
+df = pd.read_csv(DATA_PATH) 
+print("Dataset shape:", df.shape) 
+print("Columns:") 
+print(df.columns.tolist()) 
+ 
+# --------------------------------------------------------- 
+# 3. Define features and target 
+# --------------------------------------------------------- 
+ 
+FEATURE_COLS = [ 
+    "sepal length (cm)", 
+    "sepal width (cm)", 
+    "petal length (cm)", 
+    "petal width (cm)", 
+    "sepal_area", 
+    "petal_area", 
+    "sepal_to_petal_length_ratio" 
+] 
+ 
+TARGET_COL = "species" 
+ 
+# --------------------------------------------------------- 
+# 4. Prepare X and y 
+# --------------------------------------------------------- 
+ 
+X = df[FEATURE_COLS].copy() 
+ 
+# Fill missing values using median 
+X = X.fillna(X.median()) 
+ 
+# Convert species names into numbers 
+label_encoder = LabelEncoder() 
+y = label_encoder.fit_transform(df[TARGET_COL]) 
+ 
+# --------------------------------------------------------- 
+# 5. Train-test split 
+# --------------------------------------------------------- 
+ 
+X_train, X_test, y_train, y_test = train_test_split( 
+    X, 
+    y, 
+    test_size=0.20, 
+    random_state=42, 
+    stratify=y 
+) 
+ 
+# --------------------------------------------------------- 
+# 6. Define models 
+# --------------------------------------------------------- 
+ 
+models = { 
+    "logistic_regression": LogisticRegression( 
+        max_iter=200, 
+        C=1.0 
+    ), 
+ 
+    "random_forest_shallow": RandomForestClassifier( 
+        n_estimators=50, 
+        max_depth=3, 
+        random_state=42 
+    ), 
+ 
+    "random_forest_deep": RandomForestClassifier( 
+        n_estimators=200, 
+        max_depth=None, 
+        random_state=42 
+    ) 
+} 
+ 
+# --------------------------------------------------------- 
+# 7. Train and track each model 
+# --------------------------------------------------------- 
+ 
+results = [] 
+ 
+for model_name, model in models.items(): 
+    print("\n" + "=" * 60) 
+    print("Training:", model_name) 
+    print("=" * 60) 
+ 
+    with mlflow.start_run(run_name=model_name): 
+ 
+        # Train model 
+        model.fit(X_train, y_train) 
+ 
+        # Predictions 
+        y_pred = model.predict(X_test) 
+ 
+        # Metrics 
+        accuracy = accuracy_score(y_test, y_pred) 
+        precision = precision_score( 
+            y_test, 
+            y_pred, 
+            average="macro", 
+            zero_division=0 
+        ) 
+        recall = recall_score( 
+            y_test, 
+            y_pred, 
+            average="macro", 
+            zero_division=0 
+        ) 
+        f1 = f1_score( 
+            y_test, 
+            y_pred, 
+            average="macro", 
+            zero_division=0 
+        ) 
+ 
+        # ------------------------------------------------- 
+        # Log parameters 
+        # ------------------------------------------------- 
+ 
+        mlflow.log_param("model_type", model_name) 
+        if model_name == "logistic_regression": 
+            mlflow.log_param("max_iter", 200) 
+            mlflow.log_param("C", 1.0) 
+        else: 
+            mlflow.log_param( 
+                "n_estimators", 
+                model.n_estimators 
+            ) 
+            mlflow.log_param( 
+                "max_depth", 
+                model.max_depth 
+            ) 
+ 
+        # ------------------------------------------------- 
+        # Log metrics 
+        # ------------------------------------------------- 
+ 
+        mlflow.log_metric("accuracy", accuracy) 
+        mlflow.log_metric("precision_macro", precision) 
+        mlflow.log_metric("recall_macro", recall) 
+        mlflow.log_metric("f1_macro", f1) 
+ 
+        # ------------------------------------------------- 
+        # Confusion matrix 
+        # ------------------------------------------------- 
+ 
+        cm = confusion_matrix(y_test, y_pred) 
+        disp = ConfusionMatrixDisplay( 
+            confusion_matrix=cm, 
+            display_labels=label_encoder.classes_ 
+        ) 
+ 
+        disp.plot() 
+        plt.title(f"Confusion Matrix - {model_name}") 
+        plt.tight_layout() 
+        cm_filename = f"confusion_matrix_{model_name}.png" 
+        plt.savefig(cm_filename) 
+        plt.close() 
+ 
+        # Log confusion matrix as artifact 
+        mlflow.log_artifact(cm_filename) 
+ 
+        # ------------------------------------------------- 
+        # Log trained model 
+        # ------------------------------------------------- 
+ 
+        mlflow.sklearn.log_model( 
+            model, 
+            artifact_path="model" 
+        ) 
+ 
+        # ------------------------------------------------- 
+        # Store result 
+        # ------------------------------------------------- 
+ 
+        results.append({ 
+            "run_id": mlflow.active_run().info.run_id, 
+            "model": model_name, 
+            "accuracy": accuracy, 
+            "precision_macro": precision, 
+            "recall_macro": recall, 
+            "f1_macro": f1 
+        }) 
+ 
+        print("Accuracy :", accuracy) 
+        print("Precision:", precision) 
+        print("Recall   :", recall) 
+        print("F1 Score :", f1) 
+ 
+# --------------------------------------------------------- 
+# 8. Compare models 
+# --------------------------------------------------------- 
+ 
+results_df = pd.DataFrame(results) 
+ 
+print("\n" + "=" * 60) 
+print("MODEL COMPARISON") 
+print("=" * 60) 
+print(results_df.to_string(index=False)) 
+best_model = results_df.loc[ 
+    results_df["f1_macro"].idxmax() 
+] 
+print("\nBest model based on F1 score:") 
+print(best_model) 
+ 
+this above code, loads practical 4 data data/processed/iris_features.csv 
+creates one MLflow experiment mlflow.set_experiment("iris-classification-baseline") 
+The experiment name will appear in the MLflow UI as: iris-classification-baseline 
+Trains three models 
+                                 Iris Dataset 
+                                              │ 
+          ┌───────────┼───────────┐ 
+          ▼                                ▼                                 ▼ 
+     Logistic                         RF                                RF 
+    Regression                   Shallow                      Deep 
+Specifically: 
+Run       Model 
+logistic_regression       Logistic Regression 
+random_forest_shallow       Random Forest, 50 trees, depth 3 
+Run       Model 
+random_forest_deep       Random Forest, 200 trees, unlimited depth 
+Therefore, after execution, you should see exactly 3 runs under the experiment. 
+What MLflow records for each run 
+For every model: 
+Parameters 
+For example: 
+model_type = random_forest_shallow, n_estimators = 50, max_depth = 3 
+Metrics 
+Accuracy, precision_macro, recall_macro, f1_macro 
+Artifact 1 
+Confusion matrix:  confusion_matrix_random_forest_shallow.png 
+Artifact 2 
+The trained ML model: 
+model/ 
+This is important because MLflow isn't merely recording the accuracy. It is also storing the 
+trained model artifact. 
+ 
+check the installed scikit-learn version 
+pip show scikit-learn          
+Name: scikit-learn 
+Version: 1.9.1 
+ 
+python -c "import numpy; print('NumPy:', numpy.__version__)" 
+NumPy: 2.4.6 
+python -c "import scipy; print('SciPy:', scipy.__version__)" 
+SciPy: 1.17.1 
+python -c "import sklearn; print('scikit-learn import successful')" 
+scikit-learn import successful 
+python -c "import sklearn.utils._openmp_helpers" Checks whether Scikit-
+learn’s OpenMP helper module can be imported successfully. 
+python -c "import sys; print(sys.executable)" Displays the exact path of the 
+Python interpreter currently being used. 
+C:\Users\Admin\MLOps_Lab2\.venv-mlflow\Scripts\python.exe 
+Step 3: Execute the Tracked Experiments 
+Run the code: 
+python src/train_with_mlflow.py 
+ 
+training script ran all three models and MLflow recorded all three runs. 
+1. Dataset loaded correctly 
+Dataset shape: (149, 9) 
+You have 149 rows and 9 columns, including the engineered features from Practical 4. 
+2. Three MLflow runs were created 
+
+Run Accuracy Precision Recall F1 
+logistic_regression 1.0000 1.0000 1.0000 1.0000 
+random_forest_shallow 0.9667 0.9697 0.9667 0.9666 
+random_forest_deep 0.9667 0.9697 0.9667 0.9666 
+our script selected logistic_regression based on the highest F1 score in this test split. 
+3. MLflow experiment 
+MLflow created: 
+iris-classification-baseline 
+and assigned it Experiment ID: 1 
+The three run IDs are: 
+logistic_regression 
+→ a9ab2bd8c8c94beba52c5be571842c5a 
+random_forest_shallow 
+→ 3d26f557591a4c0fbe15db35c2b4f99c 
+random_forest_deep 
+→ 7c5cb57ebeee4610aed86dfbc899d206 
+ 
+Step 4: Compare Experiments in the MLflow UI 
+Now open/refresh: 
+http://127.0.0.1:5000 
+Go to: 
+Experiments → iris-classification-baseline 
+You should see exactly 3 runs. 
+ 
+Click the logistic_regression run. 
+You should be able to see: 
+Parameters 
+Something like: 
+model_type = logistic_regression 
+max_iter = 200 
+C = 1.0 
+Metrics 
+accuracy = 1.0 
+precision_macro = 1.0 
+recall_macro = 1.0 
+f1_macro = 1.0 
+ 
+
+ 
+Artifacts 
+You should see: 
+confusion_matrix_logistic_regression.png 
+model/ 
+Do the same for one of the Random Forest runs. 
+ 
+ 
+ 
+
+select all three runs, and click “Compare.” Observe the parallel-coordinates plot and the 
+metrics table sorted by f1_macro to visually confirm which configuration performed best. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+Step 5: Register the Best Model 
+Once you've confirmed the three runs in the UI, we'll create: 
+touch src/register_best_model.py 
+code src/register_best_model.py 
+paste this code: 
+ 
+# src/register_best_model.py 
+""" 
+Queries MLflow for the best run in the experiment by f1_macro 
+and registers it under a named, versioned entry in the Model Registry. 
+""" 
+import os 
+import mlflow 
+from mlflow.tracking import MlflowClient 
+ 
+# --------------------------------------------------------- 
+# 1. MLflow configuration 
+# --------------------------------------------------------- 
+ 
+mlflow.set_tracking_uri( 
+    os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000") 
+) 
+client = MlflowClient() 
+ 
+# --------------------------------------------------------- 
+# 2. Find the experiment 
+# --------------------------------------------------------- 
+ 
+experiment = client.get_experiment_by_name( 
+    "iris-classification-baseline" 
+) 
+if experiment is None: 
+    raise RuntimeError( 
+        "Experiment 'iris-classification-baseline' not found." 
+    ) 
+experiment_id = experiment.experiment_id 
+print("Experiment ID:", experiment_id) 
+ 
+# --------------------------------------------------------- 
+# 3. Find the best run 
+# --------------------------------------------------------- 
+ 
+runs = client.search_runs( 
+    experiment_ids=[experiment_id], 
+    order_by=["metrics.f1_macro DESC"] 
+) 
+if not runs: 
+    raise RuntimeError("No runs found in the experiment.") 
+ 
+best_run = runs[0] 
+best_run_id = best_run.info.run_id 
+best_f1 = best_run.data.metrics["f1_macro"] 
+best_model_type = best_run.data.params["model_type"] 
+ 
+print("\nBest Run") 
+print("Run ID:", best_run_id) 
+print("Model:", best_model_type) 
+print("F1 Score:", best_f1) 
+ 
+# --------------------------------------------------------- 
+# 4. Register the best model 
+# --------------------------------------------------------- 
+ 
+model_uri = f"runs:/{best_run_id}/model" 
+registered_model_name = "iris-classifier-prod" 
+print("\nRegistering model...") 
+print("Model URI:", model_uri) 
+model_version = mlflow.register_model( 
+    model_uri=model_uri, 
+    name=registered_model_name 
+) 
+ 
+print("\nModel Registered Successfully") 
+print("Model Name:", registered_model_name) 
+print("Version:", model_version.version) 
+ 
+# --------------------------------------------------------- 
+# 5. Transition model to Staging 
+# --------------------------------------------------------- 
+ 
+client.transition_model_version_stage( 
+    name=registered_model_name, 
+    version=model_version.version, 
+    stage="Staging" 
+) 
+print("\nModel moved to Staging successfully.") 
+print( 
+    f"Model URI: models:/{registered_model_name}/Staging" 
+) 
+ 
+python src/register_best_model.py 
+ 
+ 
+Refresh MLflow in browser and look for Models / Model Registry section. 
+You should find: 
+iris-classifier-prod 
+with: 
+Version 1 
+Stage: Staging 
+ 
+Model Registry 
+The workflow will be: 
+3 MLflow Runs 
+      │ 
+      ▼ 
+Compare F1 scores 
+      │ 
+      ▼ 
+
+Select best run 
+      │ 
+      ▼ 
+Register its model 
+      │ 
+      ▼ 
+iris-classifier-prod 
+      │ 
+      ▼ 
+Version 1 
+      │ 
+      ▼ 
+Staging 
+ 
+Step 6: Load the Registered Model for Inference (Verification) 
+Now we'll demonstrate that another Python program can retrieve the model from the 
+Model Registry, rather than retraining it. 
+Create: 
+touch src/load_registered_model.py 
+code src/load_registered_model.py 
+paste the following code: 
+# src/load_registered_model.py 
+import os 
+import mlflow 
+import mlflow.sklearn 
+ 
+# --------------------------------------------------------- 
+# 1. Configure MLflow tracking URI 
+# --------------------------------------------------------- 
+mlflow.set_tracking_uri( 
+    os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000") 
+) 
+ 
+# --------------------------------------------------------- 
+# 2. Define registered model URI 
+# --------------------------------------------------------- 
+ 
+MODEL_URI = "models:/iris-classifier-prod/Staging" 
+print("=" * 60) 
+print("LOADING REGISTERED MODEL") 
+print("=" * 60) 
+print("Model URI:", MODEL_URI) 
+ 
+# --------------------------------------------------------- 
+# 3. Load model from Model Registry 
+# --------------------------------------------------------- 
+ 
+model = mlflow.sklearn.load_model(MODEL_URI) 
+print("\nModel loaded successfully!") 
+print("Model type:", type(model)) 
+ 
+# --------------------------------------------------------- 
+# 4. Display model 
+# --------------------------------------------------------- 
+ 
+print("\nLoaded Model:") 
+print(model) 
+ 
+python src/load_registered_model.py 
+ 
+MLflow finds: 
+iris-classifier-prod 
+        ↓ 
+Version 1 
+        ↓ 
+Staging 
+        ↓ 
+trained Logistic Regression model 
+and loads it into Python. 
+This demonstrates the final objective of our practical: 
+Load a registered model from MLflow Model Registry. 
+ 
+Now  update the C:\Users\Admin\MLOps_Lab2\.gitignore 
+code .gitignore 
+paste the below code 
+# ========================================================= 
+# Python 
+# ========================================================= 
+__pycache__/ 
+*.pyc 
+*.pyo 
+*.pyd 
+*.egg-info/ 
+
+ 
+# ========================================================= 
+# Virtual Environments 
+# ========================================================= 
+.venv/ 
+venv/ 
+.venv-feast/ 
+.venv-mlflow/ 
+ 
+# ========================================================= 
+# Environment / Secrets 
+# ========================================================= 
+.env 
+.env.* 
+!.env.example 
+ 
+# ========================================================= 
+# Data & Models 
+# Managed separately using DVC 
+# ========================================================= 
+data/*.csv 
+data/*.parquet 
+models/*.pkl 
+models/*.joblib 
+ 
+# ========================================================= 
+# Feast 
+# ========================================================= 
+**/.venv-feast/ 
+**/__pycache__/ 
+**/*.pyc 
+**/data/*.parquet 
+**/data/*.db 
+ 
+# DVC cache / local remote should not be committed 
+.dvc/cache/ 
+ 
+# ========================================================= 
+# MLflow 
+# ========================================================= 
+mlruns/ 
+mlflow.db 
+mlartifacts/ 
+confusion_matrix_*.png 
+ 
+# ========================================================= 
+# Jupyter 
+# ========================================================= 
+.ipynb_checkpoints/ 
+ 
+# ========================================================= 
+# IDE / Editor 
+# ========================================================= 
+.vscode/ 
+.idea/ 
+ 
+# ========================================================= 
+# OS-specific files 
+# ========================================================= 
+.DS_Store 
+Thumbs.db 
+ 
+Stage Practical 5 and 6 files and push to git hub 
+Stage the Practical 5 files 
+git add practical5_feast/ 
+Stage the Practical 6 MLflow scripts 
+git add src/train_with_mlflow.py src/register_best_model.py 
+src/load_registered_model.py 
+Stage the updated .gitignore 
+git add .gitignore 
+Stage the Practical 4 modifications 
+git add src/pipeline/collect.py src/pipeline/features.py 
+Check exactly what will be committed 
+git status 
+ 
+Commit 
+git commit -m "Add Feast and MLflow MLOps practicals" 
+git status 
+Push to GitHub 
+
+git push origin main 
+git status 
+you should see: 
+On branch main 
+Your branch is up to date with 'origin/main'.  
+nothing to commit, working tree clean 
+Verification & Execution Steps 
+• mlflow ui starts without error and the UI is reachable in a browser at 
+http://127.0.0.1:5000. 
+• After running train_with_mlflow.py, the iris-classification-baseline 
+experiment in the UI shows exactly 3 runs, each with logged model_type, 
+C/max_iter or n_estimators/max_depth parameters, all 4 metrics (accuracy, 
+precision_macro, recall_macro, f1_macro), and a confusion_matrix_*.png 
+artifact and a model/ artifact directory (containing MLmodel, model.pkl, 
+conda.yaml). 
+• The “Compare” view in the UI displays all three runs’ metrics side-by-side; f1_macro 
+should be highest for one of the two Random Forest configurations. 
+• Terminal output from register_best_model.py correctly identifies the highest-
+f1_macro run and confirms Registered as 'iris-classifier-prod' version 1. 
+• The MLflow UI’s “Models” tab shows iris-classifier-prod with Version 1 in the 
+Staging stage. 
+• load_registered_model.py runs without error and prints a valid scikit-learn 
+estimator object, confirming the registered model can be successfully retrieved and 
+deserialized purely from its registry alias (models:/iris-classifier-
+prod/Staging) rather than a hardcoded run ID or file path. 
+Viva-Voce / Post-Lab Questions 
+Q1. Explain the difference between an MLflow “Run,” “Experiment,” and a 
+“Registered Model,” and how they relate to each other. Answer: A Run is the finest-
+grained unit — a single execution of training code with a specific configuration, recording 
+that execution’s parameters, metrics, artifacts, and metadata. An Experiment is a named 
+container that groups related runs together (e.g., all runs exploring different 
+models/hyperparameters for the same task), enabling side-by-side comparison across 
+runs. A Registered Model sits at a higher level still: it is a named, versioned entity in the 
+Model Registry that references a specific run’s model artifact (via runs:/<run_id>/model) 
+and can progress through governance stages (Staging, Production, Archived) 
+independent of the underlying experiment/run structure — effectively promoting one 
+specific run’s output from “a tracked experiment result” to “an officially sanctioned, 
+deployable model version.” 
+Q2. Why does MLflow store the model together with its exact library versions and an 
+input/output signature (the MLmodel format), rather than simply pickling the model 
+object? Answer: A raw pickle file only contains the serialized model weights/structure; 
+deserializing it correctly requires the loading environment to happen to have the exact 
+same library (e.g., scikit-learn) version installed, or subtle (sometimes silent) 
+incompatibilities can occur, and there is no record of what input shape/types/column 
+order the model expects. MLflow’s MLmodel format packages the serialized model 
+alongside a conda.yaml/requirements.txt capturing the exact dependency versions used 
+at training time, and an optional signature describing expected input and output schemas 
+— this makes the model self-describing and portable: any MLflow-compatible serving 
+tool can reconstruct an environment matching training-time conditions and validate that 
+incoming inference requests match the expected schema, directly reducing another class of 
+training-serving mismatch beyond just the feature-computation skew discussed in 
+Experiment 5. 
+Q3. In Step 5, the “best” model was selected purely by the highest f1_macro on a 
+single train/test split. What is a limitation of this selection methodology, and how 
+might it be improved using concepts from this and later experiments? Answer: 
+Selecting based on a single train/test split risks the chosen “best” model simply being the 
+one that happened to fit that particular random split well, rather than the model that would 
+generalize best on new unseen data — the observed metric has high variance, especially 
+with the Iris dataset’s modest size (150 samples). A more robust methodology would log 
+cross-validated metrics (e.g., mean and standard deviation of f1_macro across k folds) 
+rather than a single split’s value, and use MLflow’s tagging/nested-run features to log per-
+fold results under a parent run for full transparency. This connects directly to Experiment 7 
+(Hyperparameter Selection via Grid/Random Search), where systematic, cross-validated 
+comparison across a larger hyperparameter space — rather than the three hand-picked 
+configurations used here — provides a substantially more reliable basis for model 
+selection. 
