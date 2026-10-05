@@ -1,63 +1,43 @@
 # src/load_registered_model.py
 
 import os
+from pathlib import Path
+from urllib.request import urlopen
 
 import mlflow
 import mlflow.sklearn
 
-
-# ---------------------------------------------------------
-# 1. Configure MLflow tracking URI
-# ---------------------------------------------------------
-
-mlflow.set_tracking_uri(
-    os.getenv(
-        "MLFLOW_TRACKING_URI",
-        "http://127.0.0.1:5000"
-    )
-)
-
-
-# ---------------------------------------------------------
-# 2. Define registered model URI
-# ---------------------------------------------------------
-
 MODEL_URI = "models:/iris-classifier-prod/Staging"
 
 
-print("=" * 60)
+def resolve_tracking_uri() -> str:
+    configured = os.getenv("MLFLOW_TRACKING_URI")
+    if configured:
+        return configured
 
-print("LOADING REGISTERED MODEL")
-
-print("=" * 60)
-
-print(
-    "Model URI:",
-    MODEL_URI
-)
-
-
-# ---------------------------------------------------------
-# 3. Load model from Model Registry
-# ---------------------------------------------------------
-
-model = mlflow.sklearn.load_model(
-    MODEL_URI
-)
+    default_local = "http://127.0.0.1:5000"
+    try:
+        with urlopen(default_local, timeout=2):
+            return default_local
+    except Exception:
+        return (Path.cwd() / "mlruns").as_uri()
 
 
-print("\nModel loaded successfully!")
+def main() -> None:
+    mlflow.set_tracking_uri(resolve_tracking_uri())
 
-print(
-    "Model type:",
-    type(model)
-)
+    print("=" * 60)
+    print("LOADING REGISTERED MODEL")
+    print("=" * 60)
+    print("Model URI:", MODEL_URI)
+
+    model = mlflow.sklearn.load_model(MODEL_URI)
+
+    print("\nModel loaded successfully!")
+    print("Model type:", type(model))
+    print("\nLoaded Model:")
+    print(model)
 
 
-# ---------------------------------------------------------
-# 4. Display model
-# ---------------------------------------------------------
-
-print("\nLoaded Model:")
-
-print(model)
+if __name__ == "__main__":
+    main()
