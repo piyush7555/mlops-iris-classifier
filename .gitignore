@@ -23,6 +23,8 @@ mlruns/
 .idea/ 
 
 
+.venv-feast/
+.venv-1/
 .venv-mlflow/
 mlruns/
 mlflow.db

@@ -18,6 +18,8 @@ venv.bak/
 dist/
 build/
 .venv
+.venv-feast/
+.venv-1/
 
 # Pytest
 .cache

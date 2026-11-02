@@ -1,17 +1,47 @@
-import json
+import os
+import shutil
 import subprocess
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 
 from feast import FeatureStore
-from feast.data_source import PushMode
+
+
+FEATURE_NAMES = [
+    "iris_measurements:sepal length (cm)",
+    "iris_measurements:sepal width (cm)",
+    "iris_measurements:petal length (cm)",
+    "iris_measurements:petal width (cm)",
+    "iris_engineered_features:sepal_area",
+    "iris_engineered_features:petal_area",
+    "iris_engineered_features:sepal_to_petal_length_ratio",
+    "iris_engineered_features:petal_length_bin",
+]
+
+
+def _feast_cli() -> list[str]:
+    feast_bin = shutil.which("feast")
+    if feast_bin:
+        return [feast_bin]
+
+    scripts_dir = Path(sys.prefix) / "Scripts"
+    candidate = scripts_dir / ("feast.exe" if os.name == "nt" else "feast")
+    if candidate.exists():
+        return [str(candidate)]
+
+    return ["feast"]
 
 
 def run_demo():
-    store = FeatureStore(repo_path=".")
+    repo_path = Path(__file__).resolve().parent
+    store = FeatureStore(repo_path=str(repo_path))
+    feast_cmd = _feast_cli()
+
     print("\n--- Run feast apply ---")
-    subprocess.run(["feast", "apply"])
+    subprocess.run(feast_cmd + ["--chdir", str(repo_path), "apply"], check=True)
 
     print("\n--- Historical features for training ---")
     fetch_historical_features_entity_df(store, for_batch_scoring=False)
@@ -28,111 +58,44 @@ def run_demo():
     print("\n--- Online features retrieved (instead) through a feature service---")
     fetch_online_features(store, source="feature_service")
 
-    print(
-        "\n--- Online features retrieved (using feature service v3, which uses a feature view with a push source---"
-    )
-    fetch_online_features(store, source="push")
-
-    print("\n--- Simulate a stream event ingestion of the hourly stats df ---")
-    event_df = pd.DataFrame.from_dict(
-        {
-            "driver_id": [1001],
-            "event_timestamp": [
-                datetime.now(),
-            ],
-            "created": [
-                datetime.now(),
-            ],
-            "conv_rate": [1.0],
-            "acc_rate": [1.0],
-            "avg_daily_trips": [1000],
-            "driver_metadata": [{"vehicle_type": "truck", "rating": "5.0"}],
-            "driver_config": [
-                json.dumps({"max_distance_km": 500, "preferred_zones": ["north"]})
-            ],
-            "driver_profile": [{"name": "driver_1001_updated", "age": "30"}],
-        }
-    )
-    print(event_df)
-    store.push("driver_stats_push_source", event_df, to=PushMode.ONLINE_AND_OFFLINE)
-
-    print("\n--- Online features again with updated values from a stream push---")
-    fetch_online_features(store, source="push")
-
-    print("\n--- Run feast teardown ---")
-    subprocess.run(["feast", "teardown"])
+    print("\n--- Run feast teardown (best effort) ---")
+    store.close()
+    try:
+        subprocess.run(feast_cmd + ["--chdir", str(repo_path), "teardown"], check=True)
+    except (PermissionError, subprocess.CalledProcessError):
+        print("Feast teardown skipped because the SQLite online store is still locked.")
 
 
 def fetch_historical_features_entity_df(store: FeatureStore, for_batch_scoring: bool):
-    # Note: see https://docs.feast.dev/getting-started/concepts/feature-retrieval for more details on how to retrieve
-    # for all entities in the offline store instead
-    entity_df = pd.DataFrame.from_dict(
-        {
-            # entity's join key -> entity values
-            "driver_id": [1001, 1002, 1003],
-            # "event_timestamp" (reserved key) -> timestamps
-            "event_timestamp": [
-                datetime(2021, 4, 12, 10, 59, 42),
-                datetime(2021, 4, 12, 8, 12, 10),
-                datetime(2021, 4, 12, 16, 40, 26),
-            ],
-            # (optional) label name -> label values. Feast does not process these
-            "label_driver_reported_satisfaction": [1, 5, 3],
-            # values we're using for an on-demand transformation
-            "val_to_add": [1, 2, 3],
-            "val_to_add_2": [10, 20, 30],
-        }
-    )
-    # For batch scoring, we want the latest timestamps
+    source_df = pd.read_parquet(repo_path / "data" / "iris_features.parquet")
+    entity_df = source_df[["sample_id", "event_timestamp"]].head(5).copy()
+
     if for_batch_scoring:
         entity_df["event_timestamp"] = pd.to_datetime("now", utc=True)
 
     training_df = store.get_historical_features(
         entity_df=entity_df,
-        features=[
-            "driver_hourly_stats:conv_rate",
-            "driver_hourly_stats:acc_rate",
-            "driver_hourly_stats:avg_daily_trips",
-            "transformed_conv_rate:conv_rate_plus_val1",
-            "transformed_conv_rate:conv_rate_plus_val2",
-        ],
+        features=FEATURE_NAMES,
     ).to_df()
     print(training_df.head())
 
 
 def fetch_online_features(store, source: str = ""):
-    entity_rows = [
-        # {join_key: entity_value}
-        {
-            "driver_id": 1001,
-            "val_to_add": 1000,
-            "val_to_add_2": 2000,
-        },
-        {
-            "driver_id": 1002,
-            "val_to_add": 1001,
-            "val_to_add_2": 2002,
-        },
-    ]
+    entity_rows = [{"sample_id": 1}, {"sample_id": 2}]
     if source == "feature_service":
-        features_to_fetch = store.get_feature_service("driver_activity_v1")
-    elif source == "push":
-        features_to_fetch = store.get_feature_service("driver_activity_v3")
+        features_to_fetch = store.get_feature_service("iris_feature_service")
     else:
-        features_to_fetch = [
-            "driver_hourly_stats:acc_rate",
-            "driver_hourly_stats:driver_metadata",
-            "driver_hourly_stats:driver_config",
-            "driver_hourly_stats:driver_profile",
-            "transformed_conv_rate:conv_rate_plus_val1",
-            "transformed_conv_rate:conv_rate_plus_val2",
-        ]
+        features_to_fetch = FEATURE_NAMES
+
     returned_features = store.get_online_features(
         features=features_to_fetch,
         entity_rows=entity_rows,
     ).to_dict()
     for key, value in sorted(returned_features.items()):
         print(key, " : ", value)
+
+
+repo_path = Path(__file__).resolve().parent
 
 
 if __name__ == "__main__":
