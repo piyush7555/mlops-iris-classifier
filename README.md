@@ -45,3 +45,8 @@ The training script logs each model configuration as a separate MLflow run under
 `iris-classification-baseline`, stores confusion-matrix artifacts, and saves the
 trained model for registration. The registration script selects the best run by
 `f1_macro` and promotes the model to the `Staging` stage in the MLflow Model Registry.
+
+## Continuous integration
+
+The GitHub Actions workflow, its quality gates, reports, and branch-protection
+setup are documented in [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md).

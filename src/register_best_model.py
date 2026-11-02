@@ -31,7 +31,10 @@ def get_best_run(client: MlflowClient, experiment_name: str = DEFAULT_EXPERIMENT
     if experiment is None:
         raise RuntimeError(f"Experiment '{experiment_name}' not found.")
 
-    runs = client.search_runs(experiment_ids=[experiment.experiment_id], order_by=["metrics.f1_macro DESC"])
+    runs = client.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        order_by=["metrics.f1_macro DESC"],
+    )
     if not runs:
         raise RuntimeError(f"No runs found in the experiment '{experiment_name}'.")
     return runs[0]

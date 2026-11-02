@@ -55,7 +55,11 @@ def create_feature_store(input_path: str | Path, store_path: str | Path) -> int:
         connection.execute("DROP TABLE IF EXISTS iris_features")
         connection.execute("DROP TABLE IF EXISTS feature_schema")
         data.to_sql("iris_features", connection, index=False)
-        schema = {"entity": ENTITY_COLUMN, "timestamp": TIMESTAMP_COLUMN, "features": FEATURE_COLUMNS}
+        schema = {
+            "entity": ENTITY_COLUMN,
+            "timestamp": TIMESTAMP_COLUMN,
+            "features": FEATURE_COLUMNS,
+        }
         connection.execute(
             "CREATE TABLE feature_schema (name TEXT PRIMARY KEY, value TEXT NOT NULL)"
         )

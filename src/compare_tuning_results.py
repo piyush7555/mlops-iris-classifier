@@ -18,7 +18,10 @@ print(f"{'Run Name':<28}{'CV f1_macro':<15}{'Test Accuracy':<15}{'Total Fits':<1
 print("-" * 70)
 for run in sorted(runs, key=lambda item: item.data.tags.get("mlflow.runName", "")):
     name = run.data.tags.get("mlflow.runName", "unknown")
-    cv_score = run.data.metrics.get("cv_f1_macro_mean", run.data.metrics.get("best_cv_f1_macro", 0.0))
+    cv_score = run.data.metrics.get(
+        "cv_f1_macro_mean",
+        run.data.metrics.get("best_cv_f1_macro", 0.0),
+    )
     test_acc = run.data.metrics.get("test_accuracy", 0.0)
     n_iter = run.data.params.get("total_combinations") or run.data.params.get("n_iter") or "1"
     total_fits = int(n_iter) * 5 if name != "baseline_decision_tree" else 5

@@ -57,7 +57,9 @@ def configure_mlflow(experiment_name: str = DEFAULT_EXPERIMENT) -> None:
     mlflow.set_experiment(experiment_name)
 
 
-def train_and_log_models(data_path: str = "data/processed/iris_features.csv") -> list[dict[str, float | str]]:
+def train_and_log_models(
+    data_path: str = "data/processed/iris_features.csv",
+) -> list[dict[str, float | str]]:
     df = pd.read_csv(data_path)
     print("Dataset shape:", df.shape)
     print("Columns:")
@@ -119,7 +121,10 @@ def train_and_log_models(data_path: str = "data/processed/iris_features.csv") ->
             mlflow.log_metric("f1_macro", f1)
 
             cm = confusion_matrix(y_test, y_pred)
-            disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=label_encoder.classes_)
+            disp = ConfusionMatrixDisplay(
+                confusion_matrix=cm,
+                display_labels=label_encoder.classes_,
+            )
             disp.plot()
             plt.title(f"Confusion Matrix - {model_name}")
             plt.tight_layout()
@@ -152,4 +157,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

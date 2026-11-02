@@ -32,7 +32,9 @@ def _read_input_frame(input_data: str | pd.DataFrame) -> pd.DataFrame:
     return pd.read_csv(StringIO(input_data))
 
 
-def engineer_features(input_path: str | pd.DataFrame, output_path: str | None = None) -> pd.DataFrame:
+def engineer_features(
+    input_path: str | pd.DataFrame, output_path: str | None = None
+) -> pd.DataFrame:
     df = _read_input_frame(input_path)
 
     df["sepal_area"] = df["sepal length (cm)"] * df["sepal width (cm)"]
